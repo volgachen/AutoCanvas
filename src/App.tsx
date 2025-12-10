@@ -93,6 +93,7 @@ export default function AIWriterCanvas() {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [baseURL, setBaseURL] = useState('api.openai.com');
   const [apiKey, setApiKey] = useState('');
   const [apiProvider, setApiProvider] = useState<'openai' | 'gemini'>('openai');
   const [showSettings, setShowSettings] = useState(false);
@@ -109,6 +110,13 @@ export default function AIWriterCanvas() {
     const params = new URLSearchParams(window.location.search);
     const urlKey = params.get('key');
     const urlProvider = params.get('provider');
+    const baseURL = params.get('base_url');
+
+    if (baseURL){
+      // Priority 1: URL Parameters
+      setBaseURL(baseURL);
+      localStorage.setItem('ai_canvas_base_url', baseURL);
+    }
 
     if (urlKey) {
       // Priority 1: URL Parameters
@@ -214,14 +222,14 @@ export default function AIWriterCanvas() {
         aiResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
       } else {
         // OpenAI API
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        const response = await fetch(`https://${baseURL}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
           },
           body: JSON.stringify({
-            model: "gpt-4-turbo",
+            model: "gpt-4.1",
             messages: [
               { role: "system", content: "You are a helpful coding and writing assistant." },
               { role: "user", content: contextPrompt }
