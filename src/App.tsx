@@ -93,7 +93,8 @@ export default function AIWriterCanvas() {
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [baseURL, setBaseURL] = useState('api.openai.com');
+  const [baseURL, setBaseURL] = useState('');
+  const [modelName, setModelName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [apiProvider, setApiProvider] = useState<'openai' | 'gemini'>('openai');
   const [showSettings, setShowSettings] = useState(false);
@@ -110,12 +111,25 @@ export default function AIWriterCanvas() {
     const params = new URLSearchParams(window.location.search);
     const urlKey = params.get('key');
     const urlProvider = params.get('provider');
-    const baseURL = params.get('base_url');
+    const urlBaseURL = params.get('base_url');
+    const urlModelName = params.get('model_name');
 
-    if (baseURL){
+    if (urlBaseURL){
       // Priority 1: URL Parameters
-      setBaseURL(baseURL);
-      localStorage.setItem('ai_canvas_base_url', baseURL);
+      setBaseURL(urlBaseURL);
+      localStorage.setItem('ai_canvas_base_url', urlBaseURL);
+    } else {
+      // Priority 2: Local Storage
+      const storedBaseURL = localStorage.getItem('ai_canvas_base_url');
+      if (storedBaseURL) setBaseURL(storedBaseURL);
+    }
+
+    if (urlModelName){
+      setModelName(urlModelName);
+      localStorage.setItem('ai_canvas_model_name', urlModelName);
+    } else {
+      const storedModelName = localStorage.getItem('ai_canvas_model_name');
+      if (storedModelName) setModelName(storedModelName);
     }
 
     if (urlKey) {
@@ -136,11 +150,15 @@ export default function AIWriterCanvas() {
     }
   }, []);
 
-  const saveSettings = (key: string, provider: 'openai' | 'gemini') => {
+  const saveSettings = (key: string, provider: 'openai' | 'gemini', base: string, model: string) => {
     setApiKey(key);
     setApiProvider(provider);
+    setBaseURL(base);
+    setModelName(model);
     localStorage.setItem('ai_canvas_api_key', key);
     localStorage.setItem('ai_canvas_provider', provider);
+    localStorage.setItem('ai_canvas_base_url', base);
+    localStorage.setItem('ai_canvas_model_name', model);
     setShowSettings(false);
   };
 
@@ -210,7 +228,9 @@ export default function AIWriterCanvas() {
         aiResponseText = "I am currently in Demo Mode because no API Key is set.\n\nHere is a sample response based on your request:\n\nIf you were asking for code:\n```javascript\nconsole.log('This is a demo');\n```\n\nPlease configure your API Key in Settings to get real intelligence.";
       } else if (apiProvider === 'gemini') {
         // Google Gemini API
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        const geminiBaseURL = baseURL || 'generativelanguage.googleapis.com';
+        const geminiModel = modelName || 'gemini-2.0-flash-exp';
+        const response = await fetch(`https://${geminiBaseURL}/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -221,15 +241,17 @@ export default function AIWriterCanvas() {
         if (data.error) throw new Error(data.error.message);
         aiResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
       } else {
-        // OpenAI API
-        const response = await fetch(`https://${baseURL}/v1/chat/completions`, {
+        // OpenAI-compatible API
+        const openaiBaseURL = baseURL || 'api.openai.com';
+        const openaiModel = modelName || 'gpt-4o';
+        const response = await fetch(`https://${openaiBaseURL}/v1/chat/completions`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
           },
           body: JSON.stringify({
-            model: "gpt-4.1",
+            model: openaiModel,
             messages: [
               { role: "system", content: "You are a helpful coding and writing assistant." },
               { role: "user", content: contextPrompt }
@@ -429,28 +451,56 @@ export default function AIWriterCanvas() {
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">AI Provider</label>
             <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
-              <button 
+              <button
                 onClick={() => setApiProvider('gemini')}
                 className={`flex-1 py-1.5 text-sm rounded-md transition-colors ${apiProvider === 'gemini' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
               >
                 Google Gemini
               </button>
-              <button 
+              <button
                 onClick={() => setApiProvider('openai')}
                 className={`flex-1 py-1.5 text-sm rounded-md transition-colors ${apiProvider === 'openai' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
               >
-                OpenAI
+                OpenAI Compatible
               </button>
             </div>
           </div>
-          
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Base URL</label>
+            <input
+              type="text"
+              value={baseURL}
+              onChange={(e) => setBaseURL(e.target.value)}
+              placeholder={apiProvider === 'gemini' ? 'generativelanguage.googleapis.com' : 'api.openai.com'}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Optional: API base URL (without https://)
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">Model Name</label>
+            <input
+              type="text"
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              placeholder={apiProvider === 'gemini' ? 'gemini-2.0-flash-exp' : 'gpt-4o'}
+              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Optional: Model identifier (leave empty for default)
+            </p>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">API Key</label>
-            <input 
+            <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={`Enter your ${apiProvider === 'gemini' ? 'Gemini' : 'OpenAI'} API Key`}
+              placeholder={`Enter your ${apiProvider === 'gemini' ? 'Gemini' : 'API'} Key`}
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
             />
             <p className="text-xs text-gray-500 mt-1">
@@ -460,7 +510,7 @@ export default function AIWriterCanvas() {
 
           <div className="pt-2 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowSettings(false)}>Cancel</Button>
-            <Button variant="primary" onClick={() => saveSettings(apiKey, apiProvider)}>Save Configuration</Button>
+            <Button variant="primary" onClick={() => saveSettings(apiKey, apiProvider, baseURL, modelName)}>Save Configuration</Button>
           </div>
         </div>
       </Modal>

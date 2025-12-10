@@ -47,30 +47,54 @@ npm run preview
 
 ### Setting up AI API Keys
 
-The app supports two AI providers:
+The app supports two AI provider types with flexible configuration:
 
-#### Option 1: Google Gemini (Recommended for free tier)
+#### Google Gemini
 
 1. Get your API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
 2. Click the Settings icon in the app
 3. Select "Google Gemini"
-4. Enter your API key
+4. Configure (all optional except API Key):
+   - **Base URL**: Custom Gemini endpoint (default: `generativelanguage.googleapis.com`)
+   - **Model Name**: Model identifier (default: `gemini-2.0-flash-exp`)
+   - **API Key**: Your Gemini API key (required)
 5. Click "Save Configuration"
 
-#### Option 2: OpenAI
+#### OpenAI Compatible APIs
 
-1. Get your API key from [OpenAI Platform](https://platform.openai.com/api-keys)
+Supports OpenAI, Claude, local models, and any OpenAI-compatible endpoints.
+
+1. Get your API key from your provider:
+   - [OpenAI Platform](https://platform.openai.com/api-keys)
+   - [Anthropic Console](https://console.anthropic.com/)
+   - Or your custom OpenAI-compatible service
 2. Click the Settings icon in the app
-3. Select "OpenAI"
-4. Enter your API key
+3. Select "OpenAI Compatible"
+4. Configure (all optional except API Key):
+   - **Base URL**: API endpoint without `https://` (default: `api.openai.com`)
+   - **Model Name**: Model identifier (default: `gpt-4o`)
+   - **API Key**: Your API key (required)
 5. Click "Save Configuration"
 
 #### URL Parameters (Optional)
 
-You can also pass API credentials via URL:
+You can pass configuration via URL for quick setup:
 
-```
+```bash
+# Google Gemini with defaults
 http://localhost:5173?key=YOUR_API_KEY&provider=gemini
+
+# Google Gemini with custom model
+http://localhost:5173?key=YOUR_KEY&provider=gemini&model_name=gemini-1.5-pro
+
+# OpenAI with defaults
+http://localhost:5173?key=YOUR_API_KEY&provider=openai
+
+# Custom OpenAI-compatible endpoint
+http://localhost:5173?key=YOUR_KEY&provider=openai&base_url=api.anthropic.com&model_name=claude-3-opus-20240229
+
+# Local model
+http://localhost:5173?key=dummy&provider=openai&base_url=localhost:8000&model_name=llama-3
 ```
 
 ## Usage
