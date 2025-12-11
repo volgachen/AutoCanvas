@@ -1,13 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
-import {
-  Send,
-  Bot,
-  User,
-  FileCode,
-  BookOpen,
-  Settings,
-  ArrowLeft,
-  Copy,
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Send, 
+  Bot, 
+  User, 
+  FileCode, 
+  BookOpen, 
+  Settings, 
+  ArrowLeft, 
+  Copy, 
   Cpu,
   Download
 } from 'lucide-react';
@@ -54,8 +54,8 @@ const Button = ({ children, onClick, variant = 'primary', className = '', disabl
   };
 
   return (
-    <button
-      onClick={onClick}
+    <button 
+      onClick={onClick} 
       className={`${baseStyle} ${variants[variant]} ${className}`}
       disabled={disabled}
       title={title}
@@ -87,17 +87,22 @@ const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
 export default function AIWriterCanvas() {
   // State
   const [content, setContent] = useState("// Start writing your code or chapter here...\n\nfunction helloWorld() {\n  console.log('Hello AI Canvas!');\n}");
-  const [mode, setMode] = useState<'code' | 'story'>('code');
+  const [mode, setMode] = useState<'code' | 'story'>('code'); // 'code' | 'story'
   const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'system', content: 'Welcome to your AI Canvas. I can help you write code or stories. Just ask!' }
+    { id: '1', role: 'system', content: 'Welcome to your AI Canvas. I can help you write code or stories. Please configure your Backend URL in Settings.' }
   ]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [baseURL, setBaseURL] = useState('');
-  const [modelName, setModelName] = useState('');
+  const [baseURL, setBaseURL] = useState(''); // Custom backend URL for user_message and heartbeat
+  const [sessionId, setSessionId] = useState<string | null>(null); // Session ID for the polling session
+  const [showSettings, setShowSettings] = useState(false);
+  
+  // NOTE: apiKey, apiProvider, and modelName are kept in state for persistence, 
+  // but are not used in the new backend-driven flow.
   const [apiKey, setApiKey] = useState('');
   const [apiProvider, setApiProvider] = useState<'openai' | 'gemini'>('openai');
-  const [showSettings, setShowSettings] = useState(false);
+  const [modelName, setModelName] = useState('');
+
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -106,61 +111,118 @@ export default function AIWriterCanvas() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load API Key from URL parameters or local storage on mount
+  // Load Base URL and other legacy settings from local storage on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlKey = params.get('key');
-    const urlProvider = params.get('provider');
-    const urlBaseURL = params.get('base_url');
-    const urlModelName = params.get('model_name');
+    const storedBaseURL = localStorage.getItem('ai_canvas_base_url');
+    if (storedBaseURL) setBaseURL(storedBaseURL);
 
-    if (urlBaseURL){
-      // Priority 1: URL Parameters
-      setBaseURL(urlBaseURL);
-      localStorage.setItem('ai_canvas_base_url', urlBaseURL);
-    } else {
-      // Priority 2: Local Storage
-      const storedBaseURL = localStorage.getItem('ai_canvas_base_url');
-      if (storedBaseURL) setBaseURL(storedBaseURL);
-    }
-
-    if (urlModelName){
-      setModelName(urlModelName);
-      localStorage.setItem('ai_canvas_model_name', urlModelName);
-    } else {
-      const storedModelName = localStorage.getItem('ai_canvas_model_name');
-      if (storedModelName) setModelName(storedModelName);
-    }
-
-    if (urlKey) {
-      // Priority 1: URL Parameters
-      setApiKey(urlKey);
-      localStorage.setItem('ai_canvas_api_key', urlKey);
-
-      if (urlProvider) {
-        setApiProvider(urlProvider as 'openai' | 'gemini');
-        localStorage.setItem('ai_canvas_provider', urlProvider);
-      }
-    } else {
-      // Priority 2: Local Storage
-      const storedKey = localStorage.getItem('ai_canvas_api_key');
-      const storedProvider = localStorage.getItem('ai_canvas_provider');
-      if (storedKey) setApiKey(storedKey);
-      if (storedProvider) setApiProvider(storedProvider as 'openai' | 'gemini');
-    }
+    // Load legacy settings (kept for completeness but not strictly needed for this new flow)
+    const storedKey = localStorage.getItem('ai_canvas_api_key');
+    const storedProvider = localStorage.getItem('ai_canvas_provider');
+    const storedModelName = localStorage.getItem('ai_canvas_model_name');
+    if (storedKey) setApiKey(storedKey);
+    if (storedProvider) setApiProvider(storedProvider as 'openai' | 'gemini');
+    if (storedModelName) setModelName(storedModelName);
   }, []);
 
-  const saveSettings = (key: string, provider: 'openai' | 'gemini', base: string, model: string) => {
-    setApiKey(key);
-    setApiProvider(provider);
+  const saveSettings = (base: string) => {
     setBaseURL(base);
-    setModelName(model);
-    localStorage.setItem('ai_canvas_api_key', key);
-    localStorage.setItem('ai_canvas_provider', provider);
     localStorage.setItem('ai_canvas_base_url', base);
-    localStorage.setItem('ai_canvas_model_name', model);
+    // Clearing legacy settings as they should be handled by the backend now
+    setApiKey('');
+    setApiProvider('openai');
+    setModelName('');
+    localStorage.removeItem('ai_canvas_api_key');
+    localStorage.removeItem('ai_canvas_provider');
+    localStorage.removeItem('ai_canvas_model_name');
+
     setShowSettings(false);
   };
+
+  // --- Heartbeat (Polling) Logic ---
+  useEffect(() => {
+    if (!sessionId || !baseURL) return;
+
+    const poll = async () => {
+      try {
+        const url = `${baseURL}/heartbeat`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Heartbeat failed with status: ${response.status}`);
+        }
+        
+        // Backend response structure expectation: 
+        // { 
+        //   status: "processing" | "completed", 
+        //   session_id: "...", 
+        //   messages: [{id, role, content, create_time, metadata}, ...] 
+        // }
+        const data = await response.json();
+        
+        // 1. Process Messages
+        if (data.messages && Array.isArray(data.messages)) {
+          setMessages(prev => {
+            // Create a Set of existing IDs to prevent duplicates
+            const existingIds = new Set(prev.map(m => m.id));
+            
+            // Filter incoming messages that we don't already have
+            const newMessages = data.messages
+              .filter((m: any) => !existingIds.has(m.id))
+              .map((m: any) => ({
+                  id: m.id || Date.now().toString(), // Use backend UUID
+                  role: m.role,
+                  content: m.content
+                  // Note: create_time and metadata are available here if needed in the future
+              }));
+
+            if (newMessages.length > 0) {
+              return [...prev, ...newMessages];
+            }
+            return prev;
+          });
+        }
+        
+        // 2. Check Status
+        // If status is ANYTHING other than 'processing', we assume the job is done/stopped.
+        if (data.status && data.status !== 'processing') {
+          setSessionId(null);
+          setIsLoading(false);
+          
+          if (data.status === 'completed' || data.status === 'done') {
+            // Optional: You could add a small system note here, or just let the loading state resolve
+          } else if (data.status === 'failed') {
+             setMessages(prev => [...prev, { 
+              id: Date.now().toString(), 
+              role: 'system', 
+              content: "Backend reported job failure." 
+            }]);
+          }
+        }
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown polling error';
+        console.error("Polling error:", errorMessage);
+        setMessages(prev => [...prev, { 
+          id: Date.now().toString(), 
+          role: 'system', 
+          content: `Connection Error: ${errorMessage}. Stopping poll.` 
+        }]);
+        setSessionId(null);
+        setIsLoading(false);
+      }
+    };
+
+    // Set up polling interval (e.g., every 2 seconds)
+    const intervalId = setInterval(poll, 2000);
+
+    // Clean up interval on unmount or when sessionId changes to null
+    return () => clearInterval(intervalId);
+  }, [sessionId, baseURL, messages]);
 
   // --- Actions ---
 
@@ -174,7 +236,21 @@ export default function AIWriterCanvas() {
   };
 
   const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
+    // Fallback for secure contexts where navigator.clipboard.writeText might not work in an iframe
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+    } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+        } catch (err) {
+            console.error('Fallback copy failed', err);
+        }
+        document.body.removeChild(textarea);
+    }
   };
 
   const insertAtCursor = (textToInsert: string) => {
@@ -199,76 +275,52 @@ export default function AIWriterCanvas() {
     }, 0);
   };
 
-  // --- AI Logic ---
+  // --- Send Message to Backend ---
 
-  const callAI = async (userMessage: string) => {
+  const sendUserMessage = async (userMessage: string) => {
+    if (!baseURL) {
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: 'Error: Backend URL is not configured. Please check Settings.' }]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
-    
-    // Construct context
-    const contextPrompt = `
-      You are an expert AI collaborator.
-      The user is currently working in "${mode === 'code' ? 'Code/Developer' : 'Story/Writer'}" mode.
-      
-      Here is the current content of their canvas:
-      ---
-      ${content.substring(0, 5000)} ${content.length > 5000 ? '...(truncated)' : ''}
-      ---
-      
-      User Request: ${userMessage}
-      
-      Provide a helpful, concise response. If generating code or text updates, provide just the content so they can copy/paste easily.
-    `;
+
+    const payload = {
+      user_message: userMessage,
+      canvas_content: content,
+      mode: mode,
+      // Pass the current messages history for context
+      chat_history: messages.map(m => ({ role: m.role, content: m.content })),
+    };
 
     try {
-      let aiResponseText = "";
+      const url = `${baseURL}/user_message`;
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
 
-      if (!apiKey) {
-        // Mock Response for Demo
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        aiResponseText = "I am currently in Demo Mode because no API Key is set.\n\nHere is a sample response based on your request:\n\nIf you were asking for code:\n```javascript\nconsole.log('This is a demo');\n```\n\nPlease configure your API Key in Settings to get real intelligence.";
-      } else if (apiProvider === 'gemini') {
-        // Google Gemini API
-        const geminiBaseURL = baseURL || 'generativelanguage.googleapis.com';
-        const geminiModel = modelName || 'gemini-2.0-flash-exp';
-        const response = await fetch(`https://${geminiBaseURL}/v1beta/models/${geminiModel}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: contextPrompt }] }]
-          })
-        });
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
-        aiResponseText = data.candidates?.[0]?.content?.parts?.[0]?.text || "No response generated.";
-      } else {
-        // OpenAI-compatible API
-        const openaiBaseURL = baseURL || 'api.openai.com';
-        const openaiModel = modelName || 'gpt-4o';
-        const response = await fetch(`https://${openaiBaseURL}/v1/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-          },
-          body: JSON.stringify({
-            model: openaiModel,
-            messages: [
-              { role: "system", content: "You are a helpful coding and writing assistant." },
-              { role: "user", content: contextPrompt }
-            ]
-          })
-        });
-        const data = await response.json();
-        if (data.error) throw new Error(data.error.message);
-        aiResponseText = data.choices?.[0]?.message?.content || "No response generated.";
+      if (!response.ok) {
+        throw new Error(`Backend request failed with status: ${response.status}`);
       }
 
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: aiResponseText }]);
+      // Backend should return a session_id
+      const data = await response.json();
+      const newSessionId = data.session_id;
+
+      if (newSessionId) {
+        setSessionId(newSessionId);
+        // Note: We don't add a system message here anymore to keep the chat clean,
+        // we rely on the Loading spinner and subsequent backend messages.
+      } else {
+        throw new Error("Backend did not return a session identifier.");
+      }
 
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: `Error: ${errorMessage}. Please check your API Key.` }]);
-    } finally {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error occurred';
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: `Failed to initiate AI job: ${errorMessage}.` }]);
       setIsLoading(false);
     }
   };
@@ -277,11 +329,25 @@ export default function AIWriterCanvas() {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
 
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
-    setMessages(prev => [...prev, userMsg]);
+    // Optimistically add user message
+    // Note: If the backend returns this same message with a different ID (UUID vs timestamp),
+    // it might appear twice. To fix this, backends often return the full chat history,
+    // or we can deduplicate by content. For now, we use simple ID checking.
+    // TODO: add temp visualization before return from the heartbeat
+    // const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
+    // setMessages(prev => [...prev, userMsg]);
+    
+    const messageToProcess = input;
     setInput('');
-    callAI(input);
+    
+    // Start the process: send message to backend
+    sendUserMessage(messageToProcess);
   };
+  
+  const statusDisplay = baseURL 
+    ? (sessionId ? <span className="text-blue-500 flex items-center gap-1">● Running (Session: {sessionId.substring(0, 4)}...)</span> : <span className="text-emerald-500 flex items-center gap-1">● Idle (Ready)</span>)
+    : <span className="text-amber-500 flex items-center gap-1">● Config Needed</span>;
+
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-100 font-sans overflow-hidden selection:bg-blue-500/30">
@@ -292,7 +358,7 @@ export default function AIWriterCanvas() {
           <div className="bg-blue-600 p-1.5 rounded-lg">
             <Cpu size={18} className="text-white" />
           </div>
-          <h1 className="font-bold text-lg tracking-tight text-gray-100">AI Co-Author</h1>
+          <h1 className="font-bold text-lg tracking-tight text-gray-100">AI Co-Author (Backend)</h1>
           <div className="h-4 w-[1px] bg-gray-700 mx-2"></div>
           <div className="flex bg-gray-800 rounded-lg p-1 border border-gray-700/50">
             <button
@@ -359,10 +425,10 @@ export default function AIWriterCanvas() {
                 
                 {/* Message Header */}
                 <div className="flex items-center gap-2 mb-1 px-1">
-                  {m.role === 'assistant' ? (
+                  {m.role === 'assistant' || m.role === 'system' ? (
                     <>
                       <Bot size={12} className="text-blue-400" />
-                      <span className="text-[10px] uppercase font-bold text-gray-500">AI Pilot</span>
+                      <span className="text-[10px] uppercase font-bold text-gray-500">{m.role === 'system' ? 'System' : 'AI Pilot'}</span>
                     </>
                   ) : (
                     <>
@@ -377,7 +443,9 @@ export default function AIWriterCanvas() {
                   className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm whitespace-pre-wrap leading-6 shadow-sm ${
                     m.role === 'user' 
                       ? 'bg-blue-600 text-white rounded-tr-sm' 
-                      : 'bg-gray-800 text-gray-200 border border-gray-700/50 rounded-tl-sm'
+                      : m.role === 'system'
+                        ? 'bg-gray-700/50 text-gray-400 border border-gray-700/50 rounded-tl-sm'
+                        : 'bg-gray-800 text-gray-200 border border-gray-700/50 rounded-tl-sm'
                   }`}
                 >
                   {m.content}
@@ -385,7 +453,7 @@ export default function AIWriterCanvas() {
 
                 {/* AI Actions */}
                 {m.role === 'assistant' && (
-                  <div className="flex items-center gap-2 mt-2 px-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-2 mt-2 px-1 opacity-100 transition-opacity">
                     <button 
                       onClick={() => insertAtCursor(m.content)}
                       className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 bg-emerald-950/30 px-2 py-1 rounded transition-colors"
@@ -426,19 +494,20 @@ export default function AIWriterCanvas() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={mode === 'code' ? "Ask AI to generate a function..." : "Ask AI to write a paragraph..."}
+                  placeholder={isLoading ? "Waiting for AI response..." : (mode === 'code' ? "Ask AI to generate a function..." : "Ask AI to write a paragraph...")}
                   className="w-full bg-gray-950 text-white placeholder-gray-500 border border-gray-700 rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all"
+                  disabled={isLoading}
                 />
                 <button
                   type="submit"
-                  disabled={isLoading || !input.trim()}
+                  disabled={isLoading || !input.trim() || !baseURL}
                   className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors"
                 >
                   <Send size={16} />
                 </button>
               </form>
               <div className="text-[10px] text-center text-gray-600 mt-2 flex justify-center items-center gap-1">
-                 {apiKey ? <span className="text-emerald-500 flex items-center gap-1">● Online ({apiProvider})</span> : <span className="text-amber-500 flex items-center gap-1">● Demo Mode (Mock)</span>}
+                 {statusDisplay}
               </div>
             </div>
           </div>
@@ -446,71 +515,26 @@ export default function AIWriterCanvas() {
       </div>
 
       {/* Settings Modal */}
-      <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="AI Settings">
+      <Modal isOpen={showSettings} onClose={() => setShowSettings(false)} title="Backend Settings">
         <div className="space-y-4">
+          
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">AI Provider</label>
-            <div className="flex bg-gray-900 rounded-lg p-1 border border-gray-700">
-              <button
-                onClick={() => setApiProvider('gemini')}
-                className={`flex-1 py-1.5 text-sm rounded-md transition-colors ${apiProvider === 'gemini' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'}`}
-              >
-                Google Gemini
-              </button>
-              <button
-                onClick={() => setApiProvider('openai')}
-                className={`flex-1 py-1.5 text-sm rounded-md transition-colors ${apiProvider === 'openai' ? 'bg-green-600 text-white' : 'text-gray-400 hover:text-white'}`}
-              >
-                OpenAI Compatible
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Base URL</label>
-            <input
+            <label className="block text-sm font-medium text-gray-300 mb-1">Backend URL</label>
+            <input 
               type="text"
               value={baseURL}
               onChange={(e) => setBaseURL(e.target.value)}
-              placeholder={apiProvider === 'gemini' ? 'generativelanguage.googleapis.com' : 'api.openai.com'}
+              placeholder="e.g., https://your-backend.com/api"
               className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Optional: API base URL (without https://)
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">Model Name</label>
-            <input
-              type="text"
-              value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
-              placeholder={apiProvider === 'gemini' ? 'gemini-2.0-flash-exp' : 'gpt-4o'}
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Optional: Model identifier (leave empty for default)
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">API Key</label>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={`Enter your ${apiProvider === 'gemini' ? 'Gemini' : 'API'} Key`}
-              className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Your key is stored locally in your browser and never sent to our servers.
+              This URL is used to initiate new jobs (`/user_message`) and poll for updates (`/heartbeat`).
             </p>
           </div>
 
           <div className="pt-2 flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setShowSettings(false)}>Cancel</Button>
-            <Button variant="primary" onClick={() => saveSettings(apiKey, apiProvider, baseURL, modelName)}>Save Configuration</Button>
+            <Button variant="primary" onClick={() => saveSettings(baseURL)}>Save Configuration</Button>
           </div>
         </div>
       </Modal>
