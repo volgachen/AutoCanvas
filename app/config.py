@@ -19,8 +19,13 @@ class Config(BaseSettings):
     port: int = 8000
     reload: bool = True
 
+    # SSL/TLS Configuration
+    ssl_enabled: bool = False
+    ssl_certfile: Optional[str] = None
+    ssl_keyfile: Optional[str] = None
+
     # CORS
-    allowed_origins: list[str] = ["http://localhost:5173", "http://localhost:5174"]
+    allowed_origins: list[str] = ["*"]
 
     # WebSocket
     ws_heartbeat_interval: int = 30

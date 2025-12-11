@@ -38,6 +38,13 @@ ENV/
 # Logs
 *.log
 
+# SSL Certificates
+ssl/
+*.pem
+*.key
+*.crt
+*.csr
+
 # OS
 .DS_Store
 Thumbs.db

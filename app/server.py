@@ -10,6 +10,8 @@ from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import config
+from app.services.database import db
+from app.models.schemas import SessionStatus, MessageRole
 from utils.log import logger_manager
 from utils.errors import AppError
 
@@ -45,22 +47,166 @@ class AlphaEvolveApplication:
         self.logger.info("Shutting down AI Canvas Backend...")
 
     def _register_routes(self):
-        @self.app.get("/heartbeat")
-        async def heartbeat():
-            return JSONResponse(content={"message": "ok"})
+        @self.app.post("/heartbeat")
+        async def heartbeat(request: Request):
+            """
+            Heartbeat endpoint - retrieves messages for a session
+            Expects JSON body: {"session_id": "uuid-string"}
+            Returns: {"status": "...", "messages": [...]}
+            """
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+
+            session_id = payload.get("session_id", None)
+            self.logger.info(f"Heartbeat for session {session_id}")
+
+            if not session_id:
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "error": "session_id is required",
+                        "messages": []
+                    },
+                    status_code=400
+                )
+
+            # Check if session exists
+            session = db.get_session(session_id)
+            if not session:
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "error": "session not found",
+                        "messages": []
+                    },
+                    status_code=404
+                )
+
+            # Get all messages for this session
+            messages = db.get_session_messages(session_id)
+
+            # Format messages for response
+            formatted_messages = [
+                {
+                    "id": msg["id"],
+                    "role": msg["role"],
+                    "content": msg["content"],
+                    "create_time": msg["create_time"].isoformat(),
+                    "metadata": msg["metadata"]
+                }
+                for msg in messages
+            ]
+
+            self.logger.info(f"Heartbeat for session {session_id}: {len(formatted_messages)} messages")
+
+            return JSONResponse(content={
+                "status": session["status"],
+                "session_id": session_id,
+                "messages": formatted_messages
+            })
+
+        @self.app.get("/debug/database")
+        async def debug_database(request: Request):
+            """Debug endpoint to inspect database state"""
+            sessions = db.list_sessions()
+            messages_by_session = {}
+
+            for session in sessions:
+                session_messages = db.get_session_messages(session['id'])
+                messages_by_session[session['id']] = [
+                    {
+                        "id": msg["id"],
+                        "role": msg["role"],
+                        "content": msg["content"],
+                        "create_time": msg["create_time"].isoformat(),
+                        "metadata": msg["metadata"]
+                    }
+                    for msg in session_messages
+                ]
+
+            return JSONResponse(content={
+                "stats": db.get_stats(),
+                "sessions": [
+                    {
+                        "id": s["id"],
+                        "status": s["status"],
+                        "created_at": s["created_at"].isoformat(),
+                        "updated_at": s["updated_at"].isoformat(),
+                        "messages": messages_by_session.get(s["id"], [])
+                    }
+                    for s in sessions
+                ]
+            })
 
         @self.app.post("/user_message")
         async def handle_user_message(request: Request):
-            self.logger.info(f"user_message:")
+            self.logger.info("Received user_message request")
             username = request.headers.get("webauth-username", "anonymous")
             payload = await request.json()
-            self.logger.info(f"user_message: {payload}")
-            if payload.get("id", None) is None:
-                payload["created_by"] = username
-            return JSONResponse(content={"message": "success"})
+
+            # Extract session_id and message content
+            session_id = payload.get("session_id", None)
+            message_content = payload.get("user_message", "")
+
+            # Check if session exists or create new one
+            if session_id is None or db.get_session(session_id) is None:
+                # Create new session
+                session = db.create_session()
+                session_id = session["id"]
+                self.logger.info(f"Created new session: {session_id}")
+            else:
+                self.logger.info(f"Using existing session: {session_id}")
+
+            # Create message in database
+            message = db.create_message(
+                session_id=session_id,
+                content=message_content,
+                role=MessageRole.USER,
+                metadata={
+                    "username": username,
+                    "source": "api"
+                }
+            )
+
+            if message is None:
+                self.logger.error(f"Failed to create message for session: {session_id}")
+                return JSONResponse(
+                    content={"error": "Failed to create message"},
+                    status_code=500
+                )
+
+            self.logger.info(f"Created message {message['id']} in session {session_id}")
+
+            # Update session status to processing
+            db.update_session_status(session_id, SessionStatus.PROCESSING)
+
+            return JSONResponse(content={
+                "status": "processing",
+                "session_id": session_id,
+                "message_id": message["id"]
+            })
 
     async def run(self):
-        if config.reload:
-            uvicorn.run("app:app", host=config.host, port=config.port, reload=True)
+        # Prepare uvicorn config
+        uvicorn_config = {
+            "host": config.host,
+            "port": config.port,
+        }
+
+        # Add SSL configuration if enabled
+        if config.ssl_enabled:
+            if not config.ssl_certfile or not config.ssl_keyfile:
+                raise ValueError("SSL is enabled but ssl_certfile or ssl_keyfile is not configured")
+
+            uvicorn_config["ssl_certfile"] = config.ssl_certfile
+            uvicorn_config["ssl_keyfile"] = config.ssl_keyfile
+            self.logger.info(f"HTTPS enabled with cert: {config.ssl_certfile}")
         else:
-            uvicorn.run(self.app, host=config.host, port=config.port)
+            self.logger.info("Running in HTTP mode (SSL disabled)")
+
+        if config.reload:
+            uvicorn.run("main:app", reload=True, **uvicorn_config)
+        else:
+            uvicorn.run(self.app, **uvicorn_config)
