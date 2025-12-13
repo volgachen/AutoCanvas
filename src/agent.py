@@ -115,7 +115,7 @@ class BaselineReActAgent:
         self.parser = ReActParser()
 
         # System prompt
-        self.system_prompt = """You are an expert in coding and creative writing.
+        self.system_prompt = f"""You are {self.name}, an expert in coding and creative writing.
 
 You should follow the ReAct (Reasoning + Acting) framework:
 1. Thought: Think step by step about what information you need

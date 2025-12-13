@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import config
 from app.services.database import db
+from app.services.session_manager import sessionManager
 from app.models.schemas import SessionStatus, MessageRole
 from utils.log import logger_manager
 from utils.errors import AppError
@@ -99,7 +100,7 @@ class AlphaEvolveApplication:
                 for msg in messages
             ]
 
-            self.logger.info(f"Heartbeat for session {session_id}: {len(formatted_messages)} messages")
+            self.logger.info(f"Heartbeat for session {session_id} ({session['status']}): {len(formatted_messages)} messages")
 
             return JSONResponse(content={
                 "status": session["status"],
@@ -142,22 +143,15 @@ class AlphaEvolveApplication:
 
         @self.app.post("/user_message")
         async def handle_user_message(request: Request):
-            self.logger.info("Received user_message request")
             username = request.headers.get("webauth-username", "anonymous")
             payload = await request.json()
 
             # Extract session_id and message content
             session_id = payload.get("session_id", None)
             message_content = payload.get("user_message", "")
+            self.logger.info(f"Received user_message request: session {session_id}, content: {message_content}")
 
-            # Check if session exists or create new one
-            if session_id is None or db.get_session(session_id) is None:
-                # Create new session
-                session = db.create_session()
-                session_id = session["id"]
-                self.logger.info(f"Created new session: {session_id}")
-            else:
-                self.logger.info(f"Using existing session: {session_id}")
+            conversation, session_id = sessionManager.get_or_create_conversation(session_id, self.logger)
 
             # Create message in database
             message = db.create_message(
@@ -180,6 +174,7 @@ class AlphaEvolveApplication:
             self.logger.info(f"Created message {message['id']} in session {session_id}")
 
             # Update session status to processing
+            sessionManager.check_if_restart(session_id, self.logger)
             db.update_session_status(session_id, SessionStatus.PROCESSING)
 
             return JSONResponse(content={

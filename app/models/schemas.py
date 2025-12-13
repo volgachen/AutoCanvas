@@ -12,6 +12,7 @@ class SessionStatus:
     """Session status constants"""
     ACTIVE = "active"
     PROCESSING = "processing"
+    PAUSED = "paused"
     COMPLETED = "completed"
     ERROR = "error"
     EXPIRED = "expired"
