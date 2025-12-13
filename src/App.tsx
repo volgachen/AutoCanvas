@@ -181,8 +181,7 @@ export default function AIWriterCanvas() {
 
         // If status is ANYTHING other than 'processing', we assume the job is done/stopped.
         if (data.status && data.status !== 'processing') {
-          setSessionId(null);
-          setSessionStatus(null);
+          setSessionStatus(data.status);
 
           if (data.status === 'failed' || data.status === 'error') {
              setMessages(prev => [...prev, {
@@ -201,7 +200,6 @@ export default function AIWriterCanvas() {
           role: 'system',
           content: `Connection Error: ${errorMessage}. Stopping poll.`
         }]);
-        setSessionId(null);
         setSessionStatus(null);
       }
     };
@@ -272,13 +270,21 @@ export default function AIWriterCanvas() {
       return;
     }
 
-    const payload = {
+    const payload: {
+      user_message: string;
+      canvas_content: string;
+      mode: 'code' | 'story';
+      session_id?: string;
+    } = {
       user_message: userMessage,
       canvas_content: content,
       mode: mode,
-      // Pass the current messages history for context
-      chat_history: messages.map(m => ({ role: m.role, content: m.content })),
     };
+
+    // If there's already an active session, include the session_id
+    if (sessionId) {
+      payload.session_id = sessionId;
+    }
 
     try {
       const url = `${baseURL}/user_message`;
@@ -328,8 +334,14 @@ export default function AIWriterCanvas() {
     sendUserMessage(messageToProcess);
   };
   
-  const statusDisplay = baseURL 
-    ? (sessionId ? <span className="text-blue-500 flex items-center gap-1">● Running (Session: {sessionId.substring(0, 4)}...)</span> : <span className="text-emerald-500 flex items-center gap-1">● Idle (Ready)</span>)
+  const statusDisplay = sessionStatus 
+    ? <span className={`flex items-center gap-1 ${
+        sessionStatus === 'processing' ? 'text-blue-500' 
+        : sessionStatus === 'paused' ? 'text-yellow-500' 
+        : 'text-green-500'
+      }`}>
+        ● {sessionStatus.charAt(0).toUpperCase() + sessionStatus.slice(1)}
+      </span>
     : <span className="text-amber-500 flex items-center gap-1">● Config Needed</span>;
 
 
