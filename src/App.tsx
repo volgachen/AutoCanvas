@@ -41,6 +41,14 @@ interface Message {
   content: string;
 }
 
+interface BackendMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  create_time?: string;
+  metadata?: unknown;
+}
+
 // --- Components ---
 
 const Button = ({ children, onClick, variant = 'primary', className = '', disabled = false, title = '' }: ButtonProps) => {
@@ -92,16 +100,10 @@ export default function AIWriterCanvas() {
     { id: '1', role: 'system', content: 'Welcome to your AI Canvas. I can help you write code or stories. Please configure your Backend URL in Settings.' }
   ]);
   const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [baseURL, setBaseURL] = useState(''); // Custom backend URL for user_message and heartbeat
   const [sessionId, setSessionId] = useState<string | null>(null); // Session ID for the polling session
+  const [sessionStatus, setSessionStatus] = useState<string | null>(null); // Current session status from heartbeat
   const [showSettings, setShowSettings] = useState(false);
-  
-  // NOTE: apiKey, apiProvider, and modelName are kept in state for persistence, 
-  // but are not used in the new backend-driven flow.
-  const [apiKey, setApiKey] = useState('');
-  const [apiProvider, setApiProvider] = useState<'openai' | 'gemini'>('openai');
-  const [modelName, setModelName] = useState('');
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -111,31 +113,15 @@ export default function AIWriterCanvas() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load Base URL and other legacy settings from local storage on mount
+  // Load Base URL from local storage on mount
   useEffect(() => {
     const storedBaseURL = localStorage.getItem('ai_canvas_base_url');
     if (storedBaseURL) setBaseURL(storedBaseURL);
-
-    // Load legacy settings (kept for completeness but not strictly needed for this new flow)
-    const storedKey = localStorage.getItem('ai_canvas_api_key');
-    const storedProvider = localStorage.getItem('ai_canvas_provider');
-    const storedModelName = localStorage.getItem('ai_canvas_model_name');
-    if (storedKey) setApiKey(storedKey);
-    if (storedProvider) setApiProvider(storedProvider as 'openai' | 'gemini');
-    if (storedModelName) setModelName(storedModelName);
   }, []);
 
   const saveSettings = (base: string) => {
     setBaseURL(base);
     localStorage.setItem('ai_canvas_base_url', base);
-    // Clearing legacy settings as they should be handled by the backend now
-    setApiKey('');
-    setApiProvider('openai');
-    setModelName('');
-    localStorage.removeItem('ai_canvas_api_key');
-    localStorage.removeItem('ai_canvas_provider');
-    localStorage.removeItem('ai_canvas_model_name');
-
     setShowSettings(false);
   };
 
@@ -172,8 +158,8 @@ export default function AIWriterCanvas() {
             
             // Filter incoming messages that we don't already have
             const newMessages = data.messages
-              .filter((m: any) => !existingIds.has(m.id))
-              .map((m: any) => ({
+              .filter((m: BackendMessage) => !existingIds.has(m.id))
+              .map((m: BackendMessage): Message => ({
                   id: m.id || Date.now().toString(), // Use backend UUID
                   role: m.role,
                   content: m.content
@@ -188,18 +174,21 @@ export default function AIWriterCanvas() {
         }
         
         // 2. Check Status
+        // Update session status for UI display
+        if (data.status) {
+          setSessionStatus(data.status);
+        }
+
         // If status is ANYTHING other than 'processing', we assume the job is done/stopped.
         if (data.status && data.status !== 'processing') {
           setSessionId(null);
-          setIsLoading(false);
-          
-          if (data.status === 'completed' || data.status === 'done') {
-            // Optional: You could add a small system note here, or just let the loading state resolve
-          } else if (data.status === 'failed') {
-             setMessages(prev => [...prev, { 
-              id: Date.now().toString(), 
-              role: 'system', 
-              content: "Backend reported job failure." 
+          setSessionStatus(null);
+
+          if (data.status === 'failed' || data.status === 'error') {
+             setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              role: 'system',
+              content: "Backend reported job failure."
             }]);
           }
         }
@@ -207,13 +196,13 @@ export default function AIWriterCanvas() {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown polling error';
         console.error("Polling error:", errorMessage);
-        setMessages(prev => [...prev, { 
-          id: Date.now().toString(), 
-          role: 'system', 
-          content: `Connection Error: ${errorMessage}. Stopping poll.` 
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          role: 'system',
+          content: `Connection Error: ${errorMessage}. Stopping poll.`
         }]);
         setSessionId(null);
-        setIsLoading(false);
+        setSessionStatus(null);
       }
     };
 
@@ -280,11 +269,8 @@ export default function AIWriterCanvas() {
   const sendUserMessage = async (userMessage: string) => {
     if (!baseURL) {
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: 'Error: Backend URL is not configured. Please check Settings.' }]);
-      setIsLoading(false);
       return;
     }
-
-    setIsLoading(true);
 
     const payload = {
       user_message: userMessage,
@@ -312,8 +298,7 @@ export default function AIWriterCanvas() {
 
       if (newSessionId) {
         setSessionId(newSessionId);
-        // Note: We don't add a system message here anymore to keep the chat clean,
-        // we rely on the Loading spinner and subsequent backend messages.
+        setSessionStatus('processing'); // Set initial status
       } else {
         throw new Error("Backend did not return a session identifier.");
       }
@@ -321,13 +306,12 @@ export default function AIWriterCanvas() {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown network error occurred';
       setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: `Failed to initiate AI job: ${errorMessage}.` }]);
-      setIsLoading(false);
     }
   };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!input.trim()) return;
 
     // Optimistically add user message
     // Note: If the backend returns this same message with a different ID (UUID vs timestamp),
@@ -472,16 +456,20 @@ export default function AIWriterCanvas() {
               </div>
             ))}
             
-            {/* Loading Indicator */}
-            {isLoading && (
-              <div className="flex items-start gap-3">
-                 <div className="bg-gray-800 p-3 rounded-2xl rounded-tl-sm border border-gray-700/50">
-                    <div className="flex gap-1.5">
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
-                      <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
-                    </div>
-                 </div>
+            {/* Processing Indicator */}
+            {sessionStatus === 'processing' && (
+              <div className="flex flex-col animate-in fade-in slide-in-from-bottom-2 duration-300 items-start">
+                <div className="flex items-center gap-2 mb-1 px-1">
+                  <Bot size={12} className="text-blue-400" />
+                  <span className="text-[10px] uppercase font-bold text-gray-500">AI Pilot</span>
+                </div>
+                <div className="bg-gray-800 p-3 rounded-2xl rounded-tl-sm border border-gray-700/50">
+                  <div className="flex gap-1.5">
+                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                    <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                  </div>
+                </div>
               </div>
             )}
             <div ref={chatEndRef} />
@@ -494,13 +482,12 @@ export default function AIWriterCanvas() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={isLoading ? "Waiting for AI response..." : (mode === 'code' ? "Ask AI to generate a function..." : "Ask AI to write a paragraph...")}
+                  placeholder={mode === 'code' ? "Ask AI to generate a function..." : "Ask AI to write a paragraph..."}
                   className="w-full bg-gray-950 text-white placeholder-gray-500 border border-gray-700 rounded-xl pl-4 pr-12 py-3 text-sm focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/50 transition-all"
-                  disabled={isLoading}
                 />
                 <button
                   type="submit"
-                  disabled={isLoading || !input.trim() || !baseURL}
+                  disabled={!input.trim() || !baseURL}
                   className="absolute right-2 top-2 p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-500 disabled:opacity-50 disabled:hover:bg-blue-600 transition-colors"
                 >
                   <Send size={16} />
