@@ -214,7 +214,8 @@ class InMemoryDatabase:
     def get_session_messages(
         self,
         session_id: str,
-        role: Optional[str] = None
+        role: Optional[str] = None,
+        start_from = None,
     ) -> list[dict]:
         """
         Get all messages for a session, optionally filtered by role
@@ -233,6 +234,10 @@ class InMemoryDatabase:
 
         # Sort by create_time
         df = df.sort_values('create_time')
+
+        # if start_from is not None, only return whose create_time after start_from
+        if start_from is not None:
+            df = df[df['create_time'] > start_from]
 
         result = []
         for idx, row in df.iterrows():
