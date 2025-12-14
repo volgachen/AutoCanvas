@@ -45,3 +45,23 @@ class Conversation:
                 # name=f"job-{agent.name}",
             )
             self.running_tasks[fut] = agent
+
+    def get_newest_file_versions(self):
+        # get all file versions belong to the current session id. For each unique file_id, return the one with the latest create_time.
+        all_versions = db.get_file_versions(session_id=self.session_id)
+
+        if not all_versions:
+            return []
+
+        # Group by file_id and get the latest version for each
+        latest_versions = {}
+        for version in all_versions:
+            file_id = version['file_id']
+            if file_id not in latest_versions:
+                latest_versions[file_id] = version
+            else:
+                # Compare create_time and keep the latest
+                if version['create_time'] > latest_versions[file_id]['create_time']:
+                    latest_versions[file_id] = version
+
+        return list(latest_versions.values())

@@ -100,12 +100,30 @@ class AlphaEvolveApplication:
                 for msg in messages
             ]
 
-            self.logger.info(f"Heartbeat for session {session_id} ({session['status']}): {len(formatted_messages)} messages")
+            # Get newest file versions for this session
+            conversation, _ = sessionManager.get_or_create_conversation(session_id, self.logger)
+            file_versions = conversation.get_newest_file_versions()
+
+            # Format file versions for response
+            formatted_files = [
+                {
+                    "id": fv["id"],
+                    "file_id": fv["file_id"],
+                    "version_id": fv["version_id"],
+                    "content": fv["content"],
+                    "editor": fv["editor"],
+                    "create_time": fv["create_time"].isoformat()
+                }
+                for fv in file_versions
+            ]
+
+            self.logger.info(f"Heartbeat for session {session_id} ({session['status']}): {len(formatted_messages)} messages, {len(formatted_files)} files")
 
             return JSONResponse(content={
                 "status": session["status"],
                 "session_id": session_id,
-                "messages": formatted_messages
+                "messages": formatted_messages,
+                "files": formatted_files
             })
 
         @self.app.get("/debug/database")
@@ -229,7 +247,7 @@ class AlphaEvolveApplication:
                 "session_id": session_id,
                 "version_id": file_version["version_id"],
                 "file_version_id": file_version["id"],
-                "created_time": file_version["created_time"].isoformat()
+                "create_time": file_version["create_time"].isoformat()
             })
 
     async def run(self):

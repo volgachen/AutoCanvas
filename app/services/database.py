@@ -43,7 +43,7 @@ class InMemoryDatabase:
 
         # Table 3: File Versions
         self.file_versions = pd.DataFrame(columns=[
-            'id', 'session_id', 'version_id', 'content', 'editor', 'created_time', 'file_id'
+            'id', 'session_id', 'version_id', 'content', 'editor', 'create_time', 'file_id'
         ])
         self.file_versions = self.file_versions.set_index('id')
 
@@ -349,7 +349,7 @@ class InMemoryDatabase:
             'version_id': version_id,
             'content': content,
             'editor': editor,
-            'created_time': now,
+            'create_time': now,
             'file_id': file_id
         }
 
@@ -359,7 +359,7 @@ class InMemoryDatabase:
             'version_id': version_id,
             'content': content,
             'editor': editor,
-            'created_time': now,
+            'create_time': now,
             'file_id': file_id
         }
 
@@ -384,7 +384,8 @@ class InMemoryDatabase:
         self,
         session_id: Optional[str] = None,
         file_id: Optional[str] = None,
-        editor: Optional[str] = None
+        editor: Optional[str] = None,
+        start_from = None,
     ) -> list[dict]:
         """
         Get file versions with optional filters.
@@ -395,7 +396,7 @@ class InMemoryDatabase:
             editor: Optional editor filter
 
         Returns:
-            List of file versions as dictionaries, sorted by created_time
+            List of file versions as dictionaries, sorted by create_time
         """
         df = self.file_versions
 
@@ -408,8 +409,12 @@ class InMemoryDatabase:
         if editor:
             df = df[df['editor'] == editor]
 
-        # Sort by created_time
-        df = df.sort_values('created_time')
+        # Sort by create_time
+        df = df.sort_values('create_time')
+
+        # if start_from is not None, only return whose create_time after start_from
+        if start_from is not None:
+            df = df[df['create_time'] > start_from]
 
         result = []
         for idx, row in df.iterrows():
@@ -466,7 +471,7 @@ class InMemoryDatabase:
             'id', 'session_id', 'create_time', 'metadata', 'role', 'content'
         ]).set_index('id')
         self.file_versions = pd.DataFrame(columns=[
-            'id', 'session_id', 'version_id', 'content', 'editor', 'created_time', 'file_id'
+            'id', 'session_id', 'version_id', 'content', 'editor', 'create_time', 'file_id'
         ]).set_index('id')
 
     def get_stats(self) -> dict:
