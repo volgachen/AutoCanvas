@@ -104,6 +104,7 @@ export default function AIWriterCanvas() {
   const [baseURL, setBaseURL] = useState(''); // Custom backend URL for user_message and heartbeat
   const [sessionId, setSessionId] = useState<string | null>(null); // Session ID for the polling session
   const [sessionStatus, setSessionStatus] = useState<string | null>(null); // Current session status from heartbeat
+  const [versionId, setVersionId] = useState<string | null>(null); // Current version ID of the canvas content
   const [showSettings, setShowSettings] = useState(false);
 
   const editorRef = useRef<HTMLTextAreaElement>(null);
@@ -173,8 +174,19 @@ export default function AIWriterCanvas() {
             return prev;
           });
         }
-        
-        // 2. Check Status
+
+        // 2. Process Files
+        if (data.files && Array.isArray(data.files) && data.files.length > 0) {
+          const file = data.files[0];
+          if (file.content) {
+            setContent(file.content);
+          }
+          if (file.version_id) {
+            setVersionId(file.version_id);
+          }
+        }
+
+        // 3. Check Status
         // Update session status for UI display
         if (data.status) {
           setSessionStatus(data.status);
@@ -462,14 +474,22 @@ export default function AIWriterCanvas() {
         
         {/* Left Pane: Editor */}
         <div className="flex-1 flex flex-col min-w-0 relative group">
+          {/* Version Info */}
+          {versionId && (
+            <div className="bg-gray-900/50 border-b border-gray-800 px-4 py-2 flex items-center justify-between">
+              <span className="text-xs text-gray-500">
+                Version: <span className="text-gray-400 font-mono">{versionId}</span>
+              </span>
+            </div>
+          )}
           <textarea
             ref={editorRef}
             value={content}
             onChange={(e) => setContent(e.target.value)}
             spellCheck={false}
             className={`flex-1 w-full h-full resize-none bg-[#0d1117] text-gray-300 p-6 focus:outline-none focus:ring-0 leading-relaxed ${
-              mode === 'code' 
-                ? 'font-mono text-sm' 
+              mode === 'code'
+                ? 'font-mono text-sm'
                 : 'font-serif text-lg max-w-3xl mx-auto'
             }`}
             placeholder={mode === 'code' ? "// Start coding..." : "Once upon a time..."}
