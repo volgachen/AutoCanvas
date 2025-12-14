@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Send, 
-  Bot, 
-  User, 
-  FileCode, 
-  BookOpen, 
-  Settings, 
-  ArrowLeft, 
-  Copy, 
+import {
+  Send,
+  Bot,
+  User,
+  FileCode,
+  BookOpen,
+  Settings,
+  ArrowLeft,
+  Copy,
   Cpu,
-  Download
+  Download,
+  Upload
 } from 'lucide-react';
 
 /**
@@ -315,6 +316,73 @@ export default function AIWriterCanvas() {
     }
   };
 
+  // --- Update Passage ---
+
+  const updatePassage = async () => {
+    if (!baseURL) {
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: 'Error: Backend URL is not configured. Please check Settings.' }]);
+      return;
+    }
+
+    const versionID = `v-${Date.now()}`; // Generate a unique version ID based on the current timestamp
+    const payload: {
+      content: string;
+      mode: 'code' | 'story';
+      session_id?: string;
+      version_id: string;
+    } = {
+      content: content,
+      mode: mode,
+      version_id: versionID, // Include the version ID in the payload
+    };
+
+    // If there's an active session, include the session_id
+    if (sessionId) {
+      payload.session_id = sessionId;
+    }
+
+    // Log the version ID for debugging or tracking purposes
+    console.log(`Updating passage with version ID: ${versionID} in Session ${payload.session_id}`);
+
+    try {
+      const url = `${baseURL}/update_passage`;
+      console.log(url, payload);
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      console.log(response);
+
+      if (!response.ok) {
+        throw new Error(`Update passage failed with status: ${response.status}`);
+      }
+
+      // Backend should return a session_id
+      const data = await response.json();
+      const newSessionId = data.session_id;
+
+      if (newSessionId) {
+        setSessionId(newSessionId);
+        setSessionStatus('processing'); // Set initial status
+      } else {
+        throw new Error("Backend did not return a session identifier.");
+      }
+
+      // Show success feedback
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'system',
+        content: 'Canvas content updated successfully.'
+      }]);
+
+    } catch (error) {
+      console.log(error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown network error occurred';
+      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'system', content: `Failed to update passage: ${errorMessage}.` }]);
+    }
+  };
+
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
@@ -326,10 +394,10 @@ export default function AIWriterCanvas() {
     // TODO: add temp visualization before return from the heartbeat
     // const userMsg: Message = { id: Date.now().toString(), role: 'user', content: input };
     // setMessages(prev => [...prev, userMsg]);
-    
+
     const messageToProcess = input;
     setInput('');
-    
+
     // Start the process: send message to backend
     sendUserMessage(messageToProcess);
   };
@@ -377,7 +445,10 @@ export default function AIWriterCanvas() {
         </div>
 
         <div className="flex items-center gap-2">
-           <Button variant="ghost" onClick={handleDownload} title="Download File">
+          <Button variant="ghost" onClick={updatePassage} title="Update Canvas Content" disabled={!baseURL}>
+            <Upload size={16} />
+          </Button>
+          <Button variant="ghost" onClick={handleDownload} title="Download File">
             <Download size={16} />
           </Button>
           <Button variant="ghost" onClick={() => setShowSettings(true)} title="Settings">
