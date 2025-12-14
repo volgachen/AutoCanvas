@@ -33,6 +33,36 @@ ch.setFormatter(formatter)
 logger.addHandler(ch)
 
 
+# Mode configurations
+MODE_CONFIGS = {
+    "chat": {
+        "description": "Normal conversation mode",
+        "instruction": "Now, your valid function is 'chat[The message you want to say in this conversation]', to provide your response to the current conversation.",
+        "actions": ["chat"],
+        "action_descriptions": {
+            "chat": "chat[message] - Send a message in the conversation"
+        }
+    },
+    "edit": {
+        "description": "File editing mode - make edits to files",
+        "instruction": """You can use the following actions:
+- read_file[filename] - Read the contents of a file
+- write_file[filename|content] - Write content to a file (use | as separator)
+- edit_file[filename|old_text|new_text] - Replace old_text with new_text in a file (use | as separator)
+- chat[message] - Send a message in the conversation
+
+Important: When using actions that require multiple arguments, separate them with |""",
+        "actions": ["read_file", "write_file", "edit_file", "chat"],
+        "action_descriptions": {
+            "read_file": "read_file[filename] - Read the contents of a file",
+            "write_file": "write_file[filename|content] - Write content to a file",
+            "edit_file": "edit_file[filename|old_text|new_text] - Replace old_text with new_text in a file",
+            "chat": "chat[message] - Send a message in the conversation"
+        }
+    }
+}
+
+
 class ReActParser:
     """Parser for ReAct-style output (Thought/Action/Observation)."""
 
@@ -88,23 +118,29 @@ class BaselineReActAgent:
 
     def __init__(
         self,
-        name = "Alice",
+        name: str = "Alice",
         model: str = "gpt-4.1-mini",
         temperature: float = 0.2,
-        max_rounds: int = 15,
+        mode: str = "chat",
     ):
         """
         Initialize the baseline ReAct agent.
 
         Args:
+            name: Agent name
             model: OpenAI model name
             temperature: Sampling temperature
-            max_rounds: Maximum conversation rounds
-            search_api_base_url: Base URL for search API
+            mode: Default agent mode ('chat' or 'edit')
         """
         self.name = name
         self.model = model
         self.temperature = temperature
+
+        # Validate and set mode
+        if mode not in MODE_CONFIGS:
+            raise ValueError(f"Invalid mode: {mode}. Available modes: {list(MODE_CONFIGS.keys())}")
+        self.mode = mode
+
         # Initialize OpenAI client
         self.client = AsyncOpenAI(
             base_url=os.environ.get("OPENAI_BASE_URL", ""),
@@ -114,7 +150,7 @@ class BaselineReActAgent:
         # Parser
         self.parser = ReActParser()
 
-        # System prompt
+        # System prompt (mode-agnostic)
         self.system_prompt = f"""You are {self.name}, an expert in coding and creative writing.
 
 You should follow the ReAct (Reasoning + Acting) framework:
@@ -131,6 +167,7 @@ After each action, you will receive an Observation with the results.
 Important:
 - Always start with "Thought:" followed by your reasoning
 - Always follow with "Action:" and the specific action
+- Only use the actions provided in the instructions
 """
 
         self.messages = [{
@@ -138,6 +175,13 @@ Important:
             "content": self.system_prompt,
         }]
         self.last_retrieve_time = None
+
+    def set_mode(self, mode: str):
+        """Change the agent's mode."""
+        if mode not in MODE_CONFIGS:
+            raise ValueError(f"Invalid mode: {mode}. Available modes: {list(MODE_CONFIGS.keys())}")
+        self.mode = mode
+        logger.info(f"Agent {self.name} mode changed to: {mode}")
 
     async def __call__(self, session_id) -> str:
         """
@@ -161,10 +205,11 @@ Important:
                            + "\n".join([f"【{m['role']}】{m['content']}" for m in new_messages])
             })
 
-        # TODO: add final instructions after the final message.
+        # Add mode-specific instruction message
+        mode_config = MODE_CONFIGS[self.mode]
         instruction_message = {
             "role": "user",
-            "content": "Now, your valid function is 'chat[The message you want to say in this conversation]', to provide your response to the current conversation."
+            "content": mode_config["instruction"]
         }
 
         try:
@@ -197,14 +242,59 @@ Important:
         action_name, arguments = action_result
         logger.info(f"Action: {action_name}[{arguments}]")
 
-        # TODO: make actions
-        if action_name == "chat":
-            # Create message in database
-            db.create_message(
-                session_id=session_id,
-                content=arguments,
-                role=self.name,
-                metadata={
-                    "source": "api"
-                }
-            )
+        # Execute action based on current mode
+        try:
+            observation = await self._execute_action(session_id, action_name, arguments)
+            logger.info(f"Action executed successfully: {observation[:100]}...")
+        except Exception as e:
+            logger.error(f"Action execution failed: {e}")
+            observation = f"Error: {str(e)}"
+
+    async def _execute_action(self, session_id: str, action_name: str, arguments: str) -> str:
+        """
+        Execute an action based on the action name.
+
+        Args:
+            session_id: Current session ID
+            action_name: Name of the action to execute
+            arguments: Arguments for the action
+
+        Returns:
+            Observation string
+        """
+        action_name_lower = action_name.lower()
+
+        # Chat action (available in all modes)
+        if action_name_lower == "chat":
+            return await self._action_chat(session_id, arguments)
+
+        # Edit mode actions
+        elif action_name_lower == "read_file":
+            return await self._action_read_file(arguments)
+
+        elif action_name_lower == "write_file":
+            return await self._action_write_file(arguments)
+
+        elif action_name_lower == "edit_file":
+            return await self._action_edit_file(arguments)
+
+        else:
+            return f"Unknown action: {action_name}. Available actions: {MODE_CONFIGS[self.mode]['actions']}"
+
+    async def _action_chat(self, session_id: str, message: str) -> str:
+        """Send a chat message."""
+        db.create_message(
+            session_id=session_id,
+            content=message,
+            role=self.name,
+            metadata={
+                "source": "agent",
+                "mode": self.mode
+            }
+        )
+        return f"Message sent: {message[:50]}..."
+
+    async def _action_edit_file(self, arguments: str) -> str:
+        """Edit a file by replacing old_text with new_text."""
+        # Split by | separator
+        raise NotImplementedError

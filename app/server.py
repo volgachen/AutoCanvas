@@ -183,6 +183,55 @@ class AlphaEvolveApplication:
                 "message_id": message["id"]
             })
 
+        @self.app.post("/update_passage")
+        async def update_passage(request: Request):
+            """
+            Update passage endpoint - save user-edited file version
+            Expects JSON body: {"content": "...", "version_id": int, "session_id": "..."}
+            """
+            payload = await request.json()
+
+            # Extract parameters
+            content = payload.get("content", "")
+            version_id = payload.get("version_id")
+            session_id = payload.get("session_id")
+
+            self.logger.info(f"Received update_passage request: session {session_id}, version {version_id}")
+
+            if content is None or content == "":
+                return JSONResponse(
+                    content={"error": "content is required"},
+                    status_code=400
+                )
+
+            conversation, session_id = sessionManager.get_or_create_conversation(session_id, self.logger)
+
+            # Create file version with editor as "user"
+            file_version = db.create_file_version(
+                session_id=session_id,
+                file_id="passage",  # Using "passage" as the file_id
+                content=content,
+                editor="user",
+                version_id=version_id  # Use provided version_id or let it auto-increment
+            )
+
+            if file_version is None:
+                self.logger.error(f"Failed to create file version for session: {session_id}")
+                return JSONResponse(
+                    content={"error": "Failed to create file version"},
+                    status_code=500
+                )
+
+            self.logger.info(f"Created file version {file_version['id']} (v{file_version['version_id']}) in session {session_id}")
+
+            return JSONResponse(content={
+                "status": "success",
+                "session_id": session_id,
+                "version_id": file_version["version_id"],
+                "file_version_id": file_version["id"],
+                "created_time": file_version["created_time"].isoformat()
+            })
+
     async def run(self):
         # Prepare uvicorn config
         uvicorn_config = {

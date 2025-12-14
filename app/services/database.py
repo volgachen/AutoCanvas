@@ -41,6 +41,12 @@ class InMemoryDatabase:
         ])
         self.messages = self.messages.set_index('id')
 
+        # Table 3: File Versions
+        self.file_versions = pd.DataFrame(columns=[
+            'id', 'session_id', 'version_id', 'content', 'editor', 'created_time', 'file_id'
+        ])
+        self.file_versions = self.file_versions.set_index('id')
+
     # ==================== Session Operations ====================
 
     def create_session(self, session_id: Optional[str] = None, status: str = SessionStatus.ACTIVE) -> dict:
@@ -296,6 +302,161 @@ class InMemoryDatabase:
         self.messages = self.messages.drop(message_id)
         return True
 
+    # ==================== File Version Operations ====================
+
+    def create_file_version(
+        self,
+        session_id: str,
+        file_id: str,
+        content: str,
+        editor: str,
+        version_id: Optional[int] = None
+    ) -> Optional[dict]:
+        """
+        Create a new file version entry.
+
+        Args:
+            session_id: Session ID this file version belongs to
+            file_id: Identifier for the file (e.g., filename or path)
+            content: File content
+            editor: Name of the editor/agent
+            version_id: Optional version number (auto-increments if not provided)
+
+        Returns:
+            Created file version as dictionary or None if session doesn't exist
+        """
+        # Verify session exists
+        if session_id not in self.sessions.index:
+            return None
+
+        # Auto-increment version_id if not provided
+        if version_id is None:
+            # Get the latest version for this file_id and session_id
+            existing_versions = self.file_versions[
+                (self.file_versions['session_id'] == session_id) &
+                (self.file_versions['file_id'] == file_id)
+            ]
+            if not existing_versions.empty:
+                version_id = existing_versions['version_id'].max() + 1
+            else:
+                version_id = 1
+
+        file_version_id = str(uuid4())
+        now = datetime.now()
+
+        self.file_versions.loc[file_version_id] = {
+            'session_id': session_id,
+            'version_id': version_id,
+            'content': content,
+            'editor': editor,
+            'created_time': now,
+            'file_id': file_id
+        }
+
+        return {
+            'id': file_version_id,
+            'session_id': session_id,
+            'version_id': version_id,
+            'content': content,
+            'editor': editor,
+            'created_time': now,
+            'file_id': file_id
+        }
+
+    def get_file_version(self, file_version_id: str) -> Optional[dict]:
+        """
+        Get a file version by ID.
+
+        Args:
+            file_version_id: File version ID to retrieve
+
+        Returns:
+            File version as dictionary or None if not found
+        """
+        if file_version_id not in self.file_versions.index:
+            return None
+
+        version = self.file_versions.loc[file_version_id].to_dict()
+        version['id'] = file_version_id
+        return version
+
+    def get_file_versions(
+        self,
+        session_id: Optional[str] = None,
+        file_id: Optional[str] = None,
+        editor: Optional[str] = None
+    ) -> list[dict]:
+        """
+        Get file versions with optional filters.
+
+        Args:
+            session_id: Optional session ID filter
+            file_id: Optional file ID filter
+            editor: Optional editor filter
+
+        Returns:
+            List of file versions as dictionaries, sorted by created_time
+        """
+        df = self.file_versions
+
+        if session_id:
+            df = df[df['session_id'] == session_id]
+
+        if file_id:
+            df = df[df['file_id'] == file_id]
+
+        if editor:
+            df = df[df['editor'] == editor]
+
+        # Sort by created_time
+        df = df.sort_values('created_time')
+
+        result = []
+        for idx, row in df.iterrows():
+            version = row.to_dict()
+            version['id'] = idx
+            result.append(version)
+
+        return result
+
+    def get_latest_file_version(
+        self,
+        session_id: str,
+        file_id: str
+    ) -> Optional[dict]:
+        """
+        Get the latest version of a file in a session.
+
+        Args:
+            session_id: Session ID
+            file_id: File ID
+
+        Returns:
+            Latest file version or None if not found
+        """
+        versions = self.get_file_versions(session_id=session_id, file_id=file_id)
+        if not versions:
+            return None
+
+        # Return the version with highest version_id
+        return max(versions, key=lambda v: v['version_id'])
+
+    def delete_file_version(self, file_version_id: str) -> bool:
+        """
+        Delete a file version.
+
+        Args:
+            file_version_id: File version ID to delete
+
+        Returns:
+            True if deleted, False if not found
+        """
+        if file_version_id not in self.file_versions.index:
+            return False
+
+        self.file_versions = self.file_versions.drop(file_version_id)
+        return True
+
     # ==================== Utility Operations ====================
 
     def clear_all(self):
@@ -303,6 +464,9 @@ class InMemoryDatabase:
         self.sessions = pd.DataFrame(columns=['id', 'status', 'created_at', 'updated_at']).set_index('id')
         self.messages = pd.DataFrame(columns=[
             'id', 'session_id', 'create_time', 'metadata', 'role', 'content'
+        ]).set_index('id')
+        self.file_versions = pd.DataFrame(columns=[
+            'id', 'session_id', 'version_id', 'content', 'editor', 'created_time', 'file_id'
         ]).set_index('id')
 
     def get_stats(self) -> dict:
@@ -315,6 +479,7 @@ class InMemoryDatabase:
         return {
             "total_sessions": len(self.sessions),
             "total_messages": len(self.messages),
+            "total_file_versions": len(self.file_versions),
             "sessions_by_status": sessions_by_status
         }
 
