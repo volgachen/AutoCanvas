@@ -37,6 +37,10 @@ class Config(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Database
+    database_type: str = "sqlite"  # Options: memory, pandas, sqlite
+    database_path: str = "data/app.db"  # SQLite database file path
+
     class Config:
         env_file = ".env"
         case_sensitive = False

@@ -34,10 +34,17 @@ class Conversation:
     def check_new_running_tasks(self):
         # 找到当前session里面最后说话的那个agent
         # 遍历所有agent，对除了最后说话的那个agent以外，其他agent，如果他没有运行正在生成的任务，则启动其运行任务任务
+        # 例外：如果agent不在chat模式，即使是最后说话的也要继续运行
         existing_agents = [self.running_tasks[fut] for fut in self.running_tasks]
-        last_agent_name = self.messages[-1]['role']
+        last_agent_name = self.messages[-1]['role'] if self.messages else None
+
         for agent in self.agents:
-            if agent in existing_agents or agent.name == last_agent_name:
+            if agent in existing_agents:
+                continue
+
+            # Skip if agent was last speaker AND is in chat mode (waiting for user)
+            # But continue if agent is in non-chat mode (e.g., edit mode)
+            if agent.name == last_agent_name and agent.mode == "chat":
                 continue
 
             fut = asyncio.create_task(

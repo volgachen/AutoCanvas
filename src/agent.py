@@ -23,7 +23,7 @@ import re
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
-from openai import AsyncOpenAI
+from src.llm_client import LLMClient
 from app.services.database import db
 from dotenv import load_dotenv
 
@@ -180,7 +180,7 @@ class BaselineReActAgent:
         self.mode = mode
 
         # Initialize OpenAI client
-        self.client = AsyncOpenAI(
+        self.client = LLMClient(
             base_url=os.environ.get("OPENAI_BASE_URL", ""),
             api_key=os.environ.get("OPENAI_API_KEY", "")
         )
@@ -259,14 +259,20 @@ Important:
         }
 
         try:
-            # Call LLM for reasoning and action
-            resp = await self.client.chat.completions.create(
-                model=self.model,
+            # Call LLM for reasoning and action (with logging)
+            llm_output, error = await self.client.generate(
                 messages=self.messages + [instruction_message],
+                model=self.model,
                 temperature=self.temperature,
+                session_id=session_id,
+                agent_name=self.name,
             )
 
-            llm_output = resp.choices[0].message.content
+            if error:
+                logger.warning(f"LLM call failed: {error}, retrying after 5s...")
+                await asyncio.sleep(5)
+                return
+
             logger.info(f"LLM Output:\n{llm_output}")
 
         except Exception as e:
@@ -384,13 +390,25 @@ Important:
         latest_version = db.get_latest_file_version(session_id, "passage")
 
         if not latest_version:
-            return "Error: No file found to edit. Please create a passage first."
+            raise Exception("Error: No file found to edit. Please create a passage first.")
 
         current_content = latest_version['content']
 
         # Check if search text exists
         if search_text not in current_content:
-            return f"Error: Search text not found in current passage.\nSearching for:\n{search_text[:100]}..."
+            raise Exception(f"Error: Search text not found in current passage.\nSearching for:\n{search_text[:100]}...")
+
+        # Create a message with the edit proposal
+        db.create_message(
+            session_id=session_id,
+            content=f"[Edit]\n{inputs}",
+            role=self.name,
+            metadata={
+                "source": "agent",
+                "mode": "edit",
+                "action": "search_and_replace",
+            }
+        )
 
         # Perform replacement
         new_content = current_content.replace(search_text, replace_text, 1)

@@ -1,36 +1,23 @@
 """
-In-Memory Database Service using Pandas DataFrames
-Provides CRUD operations for Sessions and Messages
+In-Memory Database Implementation using Pandas DataFrames
 """
 
 from datetime import datetime
 from typing import Optional
 import pandas as pd
 from uuid import uuid4
+import json
 
 from app.models.schemas import SessionStatus, MessageRole
+from .base import BaseDatabase
 
 
-class InMemoryDatabase:
+class MemoryDatabase(BaseDatabase):
     """
     In-memory database using pandas DataFrames
-    Thread-safe singleton implementation
     """
 
-    _instance: Optional['InMemoryDatabase'] = None
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._initialized = False
-        return cls._instance
-
     def __init__(self):
-        if self._initialized:
-            return
-
-        self._initialized = True
-
         # Table 1: Sessions
         self.sessions = pd.DataFrame(columns=['id', 'status', 'created_at', 'updated_at'])
         self.sessions = self.sessions.set_index('id')
@@ -47,19 +34,16 @@ class InMemoryDatabase:
         ])
         self.file_versions = self.file_versions.set_index('id')
 
+        # Table 4: LLM Calls
+        self.llm_calls = pd.DataFrame(columns=[
+            'id', 'session_id', 'agent_name', 'model_name', 'messages', 'response',
+            'error', 'duration_ms', 'input_tokens', 'output_tokens', 'metadata', 'created_at'
+        ])
+        self.llm_calls = self.llm_calls.set_index('id')
+
     # ==================== Session Operations ====================
 
     def create_session(self, session_id: Optional[str] = None, status: str = SessionStatus.ACTIVE) -> dict:
-        """
-        Create a new session
-
-        Args:
-            session_id: Optional custom session ID
-            status: Initial status (default: ACTIVE)
-
-        Returns:
-            Created session as dictionary
-        """
         if session_id is None:
             session_id = str(uuid4())
 
@@ -78,15 +62,6 @@ class InMemoryDatabase:
         }
 
     def get_session(self, session_id: str) -> Optional[dict]:
-        """
-        Get session by ID
-
-        Args:
-            session_id: Session ID to retrieve
-
-        Returns:
-            Session as dictionary or None if not found
-        """
         if session_id not in self.sessions.index:
             return None
 
@@ -95,16 +70,6 @@ class InMemoryDatabase:
         return session
 
     def update_session_status(self, session_id: str, status: str) -> Optional[dict]:
-        """
-        Update session status
-
-        Args:
-            session_id: Session ID to update
-            status: New status value
-
-        Returns:
-            Updated session as dictionary or None if not found
-        """
         if session_id not in self.sessions.index:
             return None
 
@@ -114,15 +79,6 @@ class InMemoryDatabase:
         return self.get_session(session_id)
 
     def list_sessions(self, status: Optional[str] = None) -> list[dict]:
-        """
-        List all sessions, optionally filtered by status
-
-        Args:
-            status: Optional status filter
-
-        Returns:
-            List of sessions as dictionaries
-        """
         df = self.sessions
         if status:
             df = df[df['status'] == status]
@@ -136,20 +92,14 @@ class InMemoryDatabase:
         return result
 
     def delete_session(self, session_id: str) -> bool:
-        """
-        Delete a session and all its messages
-
-        Args:
-            session_id: Session ID to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
         if session_id not in self.sessions.index:
             return False
 
         # Delete all messages in this session
         self.messages = self.messages[self.messages['session_id'] != session_id]
+
+        # Delete all file versions in this session
+        self.file_versions = self.file_versions[self.file_versions['session_id'] != session_id]
 
         # Delete session
         self.sessions = self.sessions.drop(session_id)
@@ -164,18 +114,6 @@ class InMemoryDatabase:
         role: str = MessageRole.USER,
         metadata: Optional[dict] = None
     ) -> Optional[dict]:
-        """
-        Create a new message
-
-        Args:
-            session_id: Session ID this message belongs to
-            content: Message content
-            role: Message role (user/assistant/system)
-            metadata: Optional metadata dictionary
-
-        Returns:
-            Created message as dictionary or None if session doesn't exist
-        """
         # Verify session exists
         if session_id not in self.sessions.index:
             return None
@@ -201,15 +139,6 @@ class InMemoryDatabase:
         }
 
     def get_message(self, message_id: str) -> Optional[dict]:
-        """
-        Get message by ID
-
-        Args:
-            message_id: Message ID to retrieve
-
-        Returns:
-            Message as dictionary or None if not found
-        """
         if message_id not in self.messages.index:
             return None
 
@@ -221,18 +150,8 @@ class InMemoryDatabase:
         self,
         session_id: str,
         role: Optional[str] = None,
-        start_from = None,
+        start_from=None,
     ) -> list[dict]:
-        """
-        Get all messages for a session, optionally filtered by role
-
-        Args:
-            session_id: Session ID to get messages for
-            role: Optional role filter
-
-        Returns:
-            List of messages as dictionaries ordered by create_time
-        """
         df = self.messages[self.messages['session_id'] == session_id]
 
         if role:
@@ -241,7 +160,6 @@ class InMemoryDatabase:
         # Sort by create_time
         df = df.sort_values('create_time')
 
-        # if start_from is not None, only return whose create_time after start_from
         if start_from is not None:
             df = df[df['create_time'] > start_from]
 
@@ -259,17 +177,6 @@ class InMemoryDatabase:
         content: Optional[str] = None,
         metadata: Optional[dict] = None
     ) -> Optional[dict]:
-        """
-        Update message content and/or metadata
-
-        Args:
-            message_id: Message ID to update
-            content: New content (optional)
-            metadata: New metadata to merge (optional)
-
-        Returns:
-            Updated message as dictionary or None if not found
-        """
         if message_id not in self.messages.index:
             return None
 
@@ -287,15 +194,6 @@ class InMemoryDatabase:
         return self.get_message(message_id)
 
     def delete_message(self, message_id: str) -> bool:
-        """
-        Delete a message
-
-        Args:
-            message_id: Message ID to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
         if message_id not in self.messages.index:
             return False
 
@@ -312,26 +210,12 @@ class InMemoryDatabase:
         editor: str,
         version_id: Optional[int] = None
     ) -> Optional[dict]:
-        """
-        Create a new file version entry.
-
-        Args:
-            session_id: Session ID this file version belongs to
-            file_id: Identifier for the file (e.g., filename or path)
-            content: File content
-            editor: Name of the editor/agent
-            version_id: Optional version number (auto-increments if not provided)
-
-        Returns:
-            Created file version as dictionary or None if session doesn't exist
-        """
         # Verify session exists
         if session_id not in self.sessions.index:
             return None
 
         # Auto-increment version_id if not provided
         if version_id is None:
-            # Get the latest version for this file_id and session_id
             existing_versions = self.file_versions[
                 (self.file_versions['session_id'] == session_id) &
                 (self.file_versions['file_id'] == file_id)
@@ -364,15 +248,6 @@ class InMemoryDatabase:
         }
 
     def get_file_version(self, file_version_id: str) -> Optional[dict]:
-        """
-        Get a file version by ID.
-
-        Args:
-            file_version_id: File version ID to retrieve
-
-        Returns:
-            File version as dictionary or None if not found
-        """
         if file_version_id not in self.file_versions.index:
             return None
 
@@ -385,19 +260,8 @@ class InMemoryDatabase:
         session_id: Optional[str] = None,
         file_id: Optional[str] = None,
         editor: Optional[str] = None,
-        start_from = None,
+        start_from=None,
     ) -> list[dict]:
-        """
-        Get file versions with optional filters.
-
-        Args:
-            session_id: Optional session ID filter
-            file_id: Optional file ID filter
-            editor: Optional editor filter
-
-        Returns:
-            List of file versions as dictionaries, sorted by create_time
-        """
         df = self.file_versions
 
         if session_id:
@@ -412,7 +276,6 @@ class InMemoryDatabase:
         # Sort by create_time
         df = df.sort_values('create_time')
 
-        # if start_from is not None, only return whose create_time after start_from
         if start_from is not None:
             df = df[df['create_time'] > start_from]
 
@@ -429,43 +292,142 @@ class InMemoryDatabase:
         session_id: str,
         file_id: str
     ) -> Optional[dict]:
-        """
-        Get the latest version of a file in a session.
-
-        Args:
-            session_id: Session ID
-            file_id: File ID
-
-        Returns:
-            Latest file version or None if not found
-        """
         versions = self.get_file_versions(session_id=session_id, file_id=file_id)
         if not versions:
             return None
 
-        # Return the version with highest version_id
         return max(versions, key=lambda v: v['version_id'])
 
     def delete_file_version(self, file_version_id: str) -> bool:
-        """
-        Delete a file version.
-
-        Args:
-            file_version_id: File version ID to delete
-
-        Returns:
-            True if deleted, False if not found
-        """
         if file_version_id not in self.file_versions.index:
             return False
 
         self.file_versions = self.file_versions.drop(file_version_id)
         return True
 
+    # ==================== LLM Call Operations ====================
+
+    def create_llm_call(
+        self,
+        model_name: str,
+        messages: list,
+        response: Optional[str] = None,
+        error: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+        session_id: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        metadata: Optional[dict] = None
+    ) -> dict:
+        call_id = str(uuid4())
+        now = datetime.now()
+
+        self.llm_calls.loc[call_id] = {
+            'session_id': session_id,
+            'agent_name': agent_name,
+            'model_name': model_name,
+            'messages': messages,
+            'response': response,
+            'error': error,
+            'duration_ms': duration_ms,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'metadata': metadata,
+            'created_at': now
+        }
+
+        return {
+            'id': call_id,
+            'session_id': session_id,
+            'agent_name': agent_name,
+            'model_name': model_name,
+            'messages': messages,
+            'response': response,
+            'error': error,
+            'duration_ms': duration_ms,
+            'input_tokens': input_tokens,
+            'output_tokens': output_tokens,
+            'metadata': metadata,
+            'created_at': now
+        }
+
+    def get_llm_call(self, call_id: str) -> Optional[dict]:
+        if call_id not in self.llm_calls.index:
+            return None
+
+        call = self.llm_calls.loc[call_id].to_dict()
+        call['id'] = call_id
+        return call
+
+    def get_llm_calls(
+        self,
+        session_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        start_from=None,
+        limit: Optional[int] = None
+    ) -> list[dict]:
+        df = self.llm_calls
+
+        if session_id:
+            df = df[df['session_id'] == session_id]
+
+        if model_name:
+            df = df[df['model_name'] == model_name]
+
+        if agent_name:
+            df = df[df['agent_name'] == agent_name]
+
+        if start_from is not None:
+            df = df[df['created_at'] > start_from]
+
+        # Sort by created_at descending
+        df = df.sort_values('created_at', ascending=False)
+
+        if limit:
+            df = df.head(limit)
+
+        result = []
+        for idx, row in df.iterrows():
+            call = row.to_dict()
+            call['id'] = idx
+            result.append(call)
+
+        return result
+
+    def update_llm_call(
+        self,
+        call_id: str,
+        response: Optional[str] = None,
+        error: Optional[str] = None,
+        duration_ms: Optional[int] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None
+    ) -> Optional[dict]:
+        if call_id not in self.llm_calls.index:
+            return None
+
+        if response is not None:
+            self.llm_calls.loc[call_id, 'response'] = response
+
+        if error is not None:
+            self.llm_calls.loc[call_id, 'error'] = error
+
+        if duration_ms is not None:
+            self.llm_calls.loc[call_id, 'duration_ms'] = duration_ms
+
+        if input_tokens is not None:
+            self.llm_calls.loc[call_id, 'input_tokens'] = input_tokens
+
+        if output_tokens is not None:
+            self.llm_calls.loc[call_id, 'output_tokens'] = output_tokens
+
+        return self.get_llm_call(call_id)
+
     # ==================== Utility Operations ====================
 
     def clear_all(self):
-        """Clear all data (useful for testing)"""
         self.sessions = pd.DataFrame(columns=['id', 'status', 'created_at', 'updated_at']).set_index('id')
         self.messages = pd.DataFrame(columns=[
             'id', 'session_id', 'create_time', 'metadata', 'role', 'content'
@@ -473,88 +435,27 @@ class InMemoryDatabase:
         self.file_versions = pd.DataFrame(columns=[
             'id', 'session_id', 'version_id', 'content', 'editor', 'create_time', 'file_id'
         ]).set_index('id')
+        self.llm_calls = pd.DataFrame(columns=[
+            'id', 'session_id', 'agent_name', 'model_name', 'messages', 'response',
+            'error', 'duration_ms', 'input_tokens', 'output_tokens', 'metadata', 'created_at'
+        ]).set_index('id')
 
     def get_stats(self) -> dict:
-        """Get database statistics"""
         sessions_by_status = {}
         if not self.sessions.empty:
             status_counts = self.sessions['status'].value_counts().to_dict()
             sessions_by_status = status_counts
 
+        llm_calls_by_model = {}
+        if not self.llm_calls.empty:
+            model_counts = self.llm_calls['model_name'].value_counts().to_dict()
+            llm_calls_by_model = model_counts
+
         return {
             "total_sessions": len(self.sessions),
             "total_messages": len(self.messages),
             "total_file_versions": len(self.file_versions),
-            "sessions_by_status": sessions_by_status
+            "total_llm_calls": len(self.llm_calls),
+            "sessions_by_status": sessions_by_status,
+            "llm_calls_by_model": llm_calls_by_model
         }
-
-
-# Global database instance
-db = InMemoryDatabase()
-
-
-# ==================== Sample Usage ====================
-
-if __name__ == "__main__":
-    """
-    Sample usage examples
-    """
-    print("=== In-Memory Database Sample Usage ===\n")
-
-    # 1. Create sessions
-    print("1. Creating sessions...")
-    session1 = db.create_session()
-    session2 = db.create_session(status=SessionStatus.PROCESSING)
-    print(f"   Created session 1: {session1['id']}")
-    print(f"   Created session 2: {session2['id']}\n")
-
-    # 2. Create messages
-    print("2. Creating messages...")
-    msg1 = db.create_message(
-        session_id=session1['id'],
-        content="Hello, how can you help me?",
-        role=MessageRole.USER
-    )
-    msg2 = db.create_message(
-        session_id=session1['id'],
-        content="I can help you with many tasks!",
-        role=MessageRole.ASSISTANT,
-        metadata={"model": "gpt-4"}
-    )
-    msg3 = db.create_message(
-        session_id=session2['id'],
-        content="What's the weather?",
-        role=MessageRole.USER
-    )
-    print(f"   Created {len([msg1, msg2, msg3])} messages\n")
-
-    # 3. Query sessions
-    print("3. Querying sessions...")
-    all_sessions = db.list_sessions()
-    print(f"   Total sessions: {len(all_sessions)}")
-    active_sessions = db.list_sessions(status=SessionStatus.ACTIVE)
-    print(f"   Active sessions: {len(active_sessions)}\n")
-
-    # 4. Query messages by session
-    print("4. Querying messages for session 1...")
-    session1_messages = db.get_session_messages(session1['id'])
-    for msg in session1_messages:
-        print(f"   [{msg['role']}] {msg['content']}")
-    print()
-
-    # 5. Update session status
-    print("5. Updating session status...")
-    db.update_session_status(session1['id'], SessionStatus.COMPLETED)
-    updated_session = db.get_session(session1['id'])
-    print(f"   Session {session1['id']} status: {updated_session['status']}\n")
-
-    # 6. Get statistics
-    print("6. Database statistics:")
-    stats = db.get_stats()
-    print(f"   {stats}\n")
-
-    # 7. Display DataFrames
-    print("7. Sessions DataFrame:")
-    print(db.sessions)
-    print("\n8. Messages DataFrame:")
-    print(db.messages)
