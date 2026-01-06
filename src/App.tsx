@@ -115,10 +115,14 @@ export default function AIWriterCanvas() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Load Base URL from local storage on mount
+  // Load Base URL from local storage on mount, with fallback to env variable
   useEffect(() => {
     const storedBaseURL = localStorage.getItem('ai_canvas_base_url');
-    if (storedBaseURL) setBaseURL(storedBaseURL);
+    if (storedBaseURL) {
+      setBaseURL(storedBaseURL);
+    } else if (import.meta.env.VITE_DEFAULT_BACKEND_URL) {
+      setBaseURL(import.meta.env.VITE_DEFAULT_BACKEND_URL);
+    }
   }, []);
 
   const saveSettings = (base: string) => {
